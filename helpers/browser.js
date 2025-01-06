@@ -1,7 +1,9 @@
+const Xvfb = require('xvfb');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
 const { connect } = require("puppeteer-real-browser");
+const xvfb = new Xvfb();
 
 const conf = {
   puppeteer,
@@ -13,9 +15,9 @@ const conf = {
   disableXvfb: false,
   ignoreAllFlags: false,
 };
-
 const initBrowser = async (conf) => {
   try {
+    xvfb.startSync();
     const { browser } = await connect(conf);
     const page = await browser.newPage();
     return { browser, page };
@@ -53,6 +55,7 @@ const closeBrowserInstance = async () => {
     if (browserInstance) {
       await browserInstance.close();
       browserInstance = null;
+      xvfb.stopSync();
     }
   } catch (error) {
     throw new Error(`Error Closing Browser: ${error.message}`);

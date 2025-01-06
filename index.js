@@ -9,6 +9,10 @@ const {
   getBrowserInstance,
   closeBrowserInstance,
   checkForTurnStile,
+  detectTurnStile,
+  handleConsent,
+  handleTurnStile,
+  handlePopIns,
 } = require("./helpers");
 
 const { Lead } = require("./models");
@@ -18,7 +22,6 @@ const { createBullBoard } = require('@bull-board/api');
 const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter');
 const { ExpressAdapter } = require('@bull-board/express');
 const mongoose = require("mongoose");
-// const { browser } = await connect(conf);
 
 const createCombos = (parameters) => {
   const combos = [];
@@ -65,14 +68,9 @@ const scout = async ({ url }) => {
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36');
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 5000 });
-    await page.screenshot({ path: "./screenshots/screenshot-scout.png" });
-    try {
-      await checkForTurnStile(page, "search");
-    } catch (error) {
-      console.warn("===! scouting: turnstile failed:", error.message);
-    }
-    await agreeOnConsent(page);
-    await removePopIns(page);
+    await handleTurnStile(page, { useCase: "search" });
+    await handleConsent(page);
+    await handlePopIns(page);
     const { maxResults, maxPages } = await getMaxResultsAndPages(page);
     const queryParams = await getQueryParams(page);
     const fullUrl = await page.evaluate(() => window.location.href);
@@ -99,13 +97,9 @@ const crawlPages = async (scrapingQueue, { pageNumber = 1, baseUrl, combo, maxPa
       }
       await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36');
       await page.goto(url, { waitUntil: 'networkidle2' });
-      try {
-        await checkForTurnStile(page, "search");
-      } catch (error) {
-        console.warn("===! crawling: turnstile failed:", error.message);
-      }
-      await removePopIns(page);
-      await agreeOnConsent(page);
+      await handleTurnStile(page);
+      await handleConsent(page);
+      await handlePopIns(page);
       await page.screenshot({ path: `./screenshots/crawling/screenshot-page-${pageNumber}.png` });
       // extract pjId and save to database
       const pjIds = await page.$$eval('#listResults ul li', (elements) => {
@@ -149,11 +143,7 @@ const scrapingProcessor = async (job) => {
     const url = `https://www.pagesjaunes.fr/pros/${pjId}`;
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36');
     await page.goto(url, { waitUntil: 'networkidle0', timeout: 0 });
-    try {
-      await checkForTurnStile(page, "lead");
-    } catch (error) {
-      job.log(`${job.name} turnstile failed: ${error.message}`);
-    }
+    await handleTurnStile(page, { useCase: "lead" });
     let name = "", phone = "", address = "", website = "", brands = "", workingHours = "", legalInfo = "";
     try {
       // extract data
@@ -238,11 +228,11 @@ const run = async (port = 3000) => {
     process.exit(0);
   });
 
-  await mongoose.connect("mongodb://localhost:27017/bull-shit");
+  await mongoose.connect("mongodb://localhost:27017/bull-test");
   const combos = createCombos(parameters);
   const combo = combos[0];
   const url = constructQuery(baseUrl, combo);
-  const name = `scraping-${Object.entries(combo).map(([key, value]) => `${key}-${value}`).join('-')}`;
+  const name = `${Object.entries(combo).map(([key, value]) => `${value}`).join('-')}`;
   const scrapingQueue = new Queue(name, { connection: { host: "localhost", port: 6379 } });
   const worker = new Worker(scrapingQueue.name, scrapingProcessor, { concurrency: 5, connection: { host: "localhost", port: 6379 } });
 
