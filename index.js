@@ -1,18 +1,16 @@
 const {
   parameters,
-  conf,
   baseUrl,
   getMaxResultsAndPages,
   getQueryParams,
-  agreeOnConsent,
-  removePopIns,
   getBrowserInstance,
   closeBrowserInstance,
-  checkForTurnStile,
-  detectTurnStile,
   handleConsent,
   handleTurnStile,
   handlePopIns,
+  handleContext,
+  setUpPage,
+  scout
 } = require("./helpers");
 
 const { Lead } = require("./models");
@@ -62,45 +60,20 @@ const constructUrlWithParams = (baseUrl, queryParams) => {
   }
 };
 
-const scout = async ({ url }) => {
-  try {
-    const browser = await getBrowserInstance();
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36');
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 5000 });
-    await handleTurnStile(page, { useCase: "search" });
-    await handleConsent(page);
-    await handlePopIns(page);
-    const { maxResults, maxPages } = await getMaxResultsAndPages(page);
-    const queryParams = await getQueryParams(page);
-    const fullUrl = await page.evaluate(() => window.location.href);
-    // always close page after use
-    await page.close();
-    return { maxResults, maxPages, queryParams, fullUrl };
-  } catch (error) {
-    throw new Error(`Error Scouting Page: ${error.message}`);
-  }
-};
-
 const crawlPages = async (scrapingQueue, { pageNumber = 1, baseUrl, combo, maxPages, maxResults, queryParams }) => {
   try {
-    const { contexte } = queryParams;
+    // const { contexte } = queryParams;
     const browser = await getBrowserInstance();
     const page = await browser.newPage();
     console.log(`page: ${pageNumber} of ${maxPages}`);
     if (pageNumber <= maxPages) {
       const url = constructUrlWithParams(baseUrl, { ...combo, ...queryParams, page: pageNumber });
-      const { queryParams: currentParams } = await scout({ url });
-      if (currentParams.contexte && currentParams.contexte !== contexte) {
-        queryParams.contexte = currentParams.contexte;
-        console.log("===> contexte changed:", queryParams.contexte);
-      }
-      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36');
-      await page.goto(url, { waitUntil: 'networkidle2' });
-      await handleTurnStile(page);
-      await handleConsent(page);
-      await handlePopIns(page);
-      await page.screenshot({ path: `./screenshots/crawling/screenshot-page-${pageNumber}.png` });
+      const context = { useCase: "search" };
+      await setUpPage(page, { url, context });
+      queryParams = await handleContext(url, queryParams, { context });
+      await handleTurnStile(page, { context, withDelay: true, delayTime: 5000 });
+      await handleConsent(page, { context, withDelay: false });
+      await handlePopIns(page, { context, withDelay: false });
       // extract pjId and save to database
       const pjIds = await page.$$eval('#listResults ul li', (elements) => {
         return elements
@@ -131,8 +104,56 @@ const crawlPages = async (scrapingQueue, { pageNumber = 1, baseUrl, combo, maxPa
     await page.close();
     return { success: `Crawled Pages of Combo: ${JSON.stringify(combo)} Successfully` };
   } catch (error) {
+    await closeBrowserInstance();
     throw new Error(`Error Crawling Page: ${error.message}`);
   }
+};
+
+const scrapePage = async (page) => {
+  let name = "", phone = "", address = "", website = "", brands = "", workingHours = "", legalInfo = "";
+  try {
+    // extract data
+    name = await page.$$eval('.header-main-infos .denom h1.noTrad', (element) => element[0]?.innerText.trim() || "");
+    phone = await page.$$eval('span.nb-phone span.coord-numero', (element) => element[0]?.innerText.trim().toLowerCase() || "");
+    address = await page.$$eval('.address-container span.noTrad', (element) => element[0]?.innerText.trim().toLowerCase() || "");
+    website = await page.$$eval('.lvs-container span.value', (element) => element[0]?.innerText.trim() || "");
+    brands = await page.$$eval('.marques ul.liste-logos li', (elements) => {
+      return elements.map((element) => element?.innerText.trim() || "");
+    });
+    workingHours = await page.$$eval('.zone-informations-pratiques #bloc-horaires #infos-horaires ul.liste-horaires-principaux li', (elements) => {
+      return elements.map((element) => {
+        const day = element.querySelector('p.jour')?.innerText?.trim() || "";
+        const hours = element.querySelector('p.liste span.horaire')?.innerText?.trim().split(" - ") || [];
+        return { day, hours };
+      })
+    });
+
+    legalInfo = await page.evaluate(() => {
+      const establishmentInfo = {};
+      const companyInfo = {};
+
+      // Extract establishment data
+      const establishmentElements = document.querySelectorAll('.info-etablissement dt');
+      establishmentElements.forEach(dt => {
+        const key = dt.textContent.trim();
+        const value = dt.nextElementSibling.querySelector('strong')?.textContent.trim() || '';
+        establishmentInfo[key] = value;
+      });
+
+      // Extract company data
+      // eslint-disable-next-line no-undef
+      const companyElements = document.querySelectorAll('.info-entreprise dt');
+      companyElements.forEach(dt => {
+        const key = dt.textContent.trim();
+        const value = dt.nextElementSibling.querySelector('strong')?.textContent.trim() || '';
+        companyInfo[key] = value;
+      });
+      return { establishmentInfo, companyInfo };
+    });
+  } catch (error) {
+    throw new Error(`Error Scraping Data: ${error.message}`);
+  }
+  return { name, phone, address, website, brands, workingHours, legalInfo };
 };
 
 const scrapingProcessor = async (job) => {
@@ -141,58 +162,12 @@ const scrapingProcessor = async (job) => {
     const browser = await getBrowserInstance();
     const page = await browser.newPage();
     const url = `https://www.pagesjaunes.fr/pros/${pjId}`;
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36');
-    await page.goto(url, { waitUntil: 'networkidle0', timeout: 0 });
-    await handleTurnStile(page, { useCase: "lead" });
-    let name = "", phone = "", address = "", website = "", brands = "", workingHours = "", legalInfo = "";
-    try {
-      // extract data
-      name = await page.$$eval('.header-main-infos .denom h1.noTrad', (element) => element[0]?.innerText.trim() || "");
-      phone = await page.$$eval('span.nb-phone span.coord-numero', (element) => element[0]?.innerText.trim().toLowerCase() || "");
-      address = await page.$$eval('.address-container span.noTrad', (element) => element[0]?.innerText.trim().toLowerCase() || "");
-      website = await page.$$eval('.lvs-container span.value', (element) => element[0]?.innerText.trim() || "");
-      brands = await page.$$eval('.marques ul.liste-logos li', (elements) => {
-        return elements.map((element) => element?.innerText.trim() || "");
-      });
-      workingHours = await page.$$eval('.zone-informations-pratiques #bloc-horaires #infos-horaires ul.liste-horaires-principaux li', (elements) => {
-        return elements.map((element) => {
-          const day = element.querySelector('p.jour')?.innerText.trim() || "";
-          const hours = element.querySelector('p.liste span.horaire')?.innerText.trim().split(" - ") || [];
-          return { day, hours };
-        })
-      });
-
-      legalInfo = await page.evaluate(() => {
-        const establishmentInfo = {};
-        const companyInfo = {};
-
-        // Extract establishment data
-        // eslint-disable-next-line no-undef
-        const establishmentElements = document.querySelectorAll('.info-etablissement dt');
-        establishmentElements.forEach(dt => {
-          const key = dt.textContent.trim();
-          const value = dt.nextElementSibling.querySelector('strong')?.textContent.trim() || '';
-          establishmentInfo[key] = value;
-        });
-
-        // Extract company data
-        // eslint-disable-next-line no-undef
-        const companyElements = document.querySelectorAll('.info-entreprise dt');
-        companyElements.forEach(dt => {
-          const key = dt.textContent.trim();
-          const value = dt.nextElementSibling.querySelector('strong')?.textContent.trim() || '';
-          companyInfo[key] = value;
-        });
-        return { establishmentInfo, companyInfo };
-      });
-    } catch (error) {
-      console.warn("===> error:", error.message);
-      job.log(`Error Scraping Data: ${error.message}`);
-    }
-
-    // update lead with data
-    const scrapedData = { name, phone, address, website, brands, workingHours, legalInfo };
+    const context = { useCase: "lead", job };
+    await setUpPage(page, { url, context });
+    await handleTurnStile(page, { context, withDelay: true, delayTime: 5000 });
+    const scrapedData = await scrapePage(page);
     const updates = {};
+    // TOREVISE: do more calculations, make the job return a report of what it collected
     Object.entries(scrapedData).forEach(([key, value]) => {
       if (value) {
         updates[`data.${key}`] = value;
@@ -205,12 +180,13 @@ const scrapingProcessor = async (job) => {
         const newLead = new Lead({ data: { pjId, ...updates } });
         await newLead.save();
       }
-    }
+    };
     // always close page after use
     await page.close();
     return { success: `Scraped Data of Lead: ${pjId} Successfully` };
   } catch (error) {
     job.log(`Error Scraping Data: ${error.message}`);
+    await closeBrowserInstance();
     throw new Error(`Error Scraping Data: ${error.message}`);
   }
 };
@@ -249,7 +225,7 @@ const run = async (port = 3000) => {
   app.use("/dashboard", serverAdapter.getRouter());
   app.use("/run", async (req, res) => {
     try {
-      const { maxResults, maxPages, queryParams } = await scout({ url });
+      const { maxResults, maxPages, queryParams } = await scout({ url, context: { useCase: "search" } });
       await crawlPages(scrapingQueue, { baseUrl, combo, maxPages, maxResults, queryParams });
       return res.json({ success: "ok" });
     } catch (error) {
