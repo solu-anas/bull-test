@@ -1,5 +1,6 @@
 const { getBrowserInstance } = require("./browser");
 const path = require("path");
+const fs = require("fs/promises");
 
 // localy-used too
 const setUpPage = async (page, { context, url, userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36' }) => {
@@ -17,7 +18,7 @@ const setUpPage = async (page, { context, url, userAgent = 'Mozilla/5.0 (Windows
   while (attempts < maxAttempts) {
     try {
       await page.setUserAgent(userAgent);
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: 5000 });
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 5000 });
       logMessage(context.useCase, "===> page set up ...done");
       break;
     } catch (error) {
@@ -99,7 +100,7 @@ const getMaxResultsAndPages = async (page, { withDelay = false, delayTime = 5000
         await delay(delayTime);
       }
       // Extract max results and pages
-      console.log("===> extracting max results and pages...");
+      console.log("===> max results and pages...");
       const maxResultsSelector = "#SEL-nbresultat";
       const maxPagesSelector = '#SEL-compteur.pagination-compteur';
       const maxResults = await page.$eval(maxResultsSelector, (el) => parseInt(el.innerText.split(" ").join("")));
@@ -110,11 +111,14 @@ const getMaxResultsAndPages = async (page, { withDelay = false, delayTime = 5000
       console.log("\t===> max results and pages extracted.");
       return { maxResults, maxPages };
     } catch (error) {
+
+      // TOREMOVE
       await page.screenshot({ path: `./screenshots/maxResults/attempt-${attempts}.png` })
+
       attempts++;
-      console.log(`\t===> extracting max results and pages: retrying... ${attempts}`);
+      console.log(`\t===> max results and pages: retrying... ${attempts}`);
       if (attempts === maxAttempts) {
-        console.error('\t===! extracting max results and pages: failed.');
+        console.error('\t===! max results and pages: failed.');
         // return { maxResults: 0, maxPages: 0 };
 
         throw new Error(`Error extracting max results and pages: ${error.message}`);
@@ -127,8 +131,9 @@ const scout = async ({ url, context }) => {
   try {
     const browser = await getBrowserInstance();
     const page = await browser.newPage();
+    // const context = { useCase: "search" }
     await setUpPage(page, { url, context });
-    await handleTurnStile(page, { context, useCase: "search", withDelay: true, delayTime: 10000 });
+    await handleTurnStile(page, { context, withDelay: true, delayTime: 10000 });
     await handleConsent(page, { context, withDelay: false, delayTime: 5000 });
     await handlePopIns(page, { context, withDelay: false, delayTime: 5000 });
     const { maxResults, maxPages } = await getMaxResultsAndPages(page, { withDelay: true, delayTime: 5000 });
@@ -190,11 +195,130 @@ const handleContext = async (url, oldParams, { context }) => {
   }
 };
 
+// const handleTurnStile = async (page, { context, withDelay = false, delayTime = 5000 }) => {
+//   const logMessage = (useCase, message) => {
+//     const map = {
+//       "search": console.log(message),
+//       "lead": context?.job?.log(message),
+//     }
+//     return map[useCase];
+//   };
+
+//   const checkIsVerifying = async (page, useCase) => {
+//     let isVerifying;
+//     let attempts = 0;
+//     let maxAttempts = 3;
+//     while (attempts < maxAttempts) {
+//       try {
+//         isVerifying = await page.$$eval("p.h2", (elements) => elements[0].innerText.includes("Verifying you are human"));
+//         break;
+//       } catch (error) {
+//         attempts++;
+//         logMessage(useCase, `===> isVerifying ... retrying ${attempts}`);
+//         if (attempts === maxAttempts) {
+//           throw new Error(`Checking if Turnstile is verifying Failed: Max Attempts Reached: ${error.message}`);
+//         }
+//       }
+//     }
+//     return isVerifying;
+//   };
+
+//   const checkIsAskingToVerify = async (page, useCase) => {
+//     let isAskingToVerify;
+//     let attempts = 0;
+//     let maxAttempts = 3;
+//     while (attempts < maxAttempts) {
+//       try {
+//         isAskingToVerify = await page.$$eval("p.h2", (elements) => {
+//           return elements[0].innerText.includes("Verify you are human");
+//         });
+//         break;
+//       } catch (error) {
+//         logMessage(useCase, `===> is Asking To Verify ... retrying ${attempts}`);
+//         attempts++;
+//         if (attempts === maxAttempts) {
+//           throw new Error(`Error Checking if Turnstile is Asking to Verify: ${error.message}`);
+//         }
+//       }
+//     }
+//     return isAskingToVerify;
+//   };
+
+//   const checkIsChallengePassed = async (page, useCase) => {
+//     const map = {
+//       "search": "#listResults",
+//       "lead": "#teaser-header",
+//     };
+//     let isChallengePassed;
+//     let attempts = 0;
+//     let maxAttempts = 3;
+//     // await delay(5000);
+//     while (attempts < maxAttempts) {
+//       try {
+//         await page.waitForSelector(map[useCase], { timeout: 1000 });
+//         isChallengePassed = true;
+//         logMessage(useCase, '===> turnstile challenge passed.');
+//         break;
+//       } catch (error) {
+//         await page.screenshot({ path: path.join(__dirname, `../screenshots/solve-challenge-attempt-${attempts}.png`) })
+//         attempts++;
+//         logMessage(useCase, `===> turnstile challenge: retrying... ${attempts}`);
+//         if (attempts === maxAttempts) {
+//           isChallengePassed = false;
+//           logMessage(useCase, '===! turnstile challenge failed.');
+//           // throw new Error(`Handling Turnstile Challenge Failed`);
+//         }
+//       }
+//     };
+//     return isChallengePassed;
+//   };
+
+//   const isVerifying = await checkIsVerifying(page, context.useCase);
+//   // it is not verifying
+//   if (isVerifying) {
+//     await delay(5000);
+//     // check if it asks to verify
+//     logMessage(context.useCase, "===> turnstile not verifying ...");
+//     const isAskingToVerify = await checkIsAskingToVerify(page, context.useCase);
+//     if (isAskingToVerify) {
+//       logMessage(context.useCase, "===> turnstile asking to verify ...");
+
+//       // wait to let puppeteer-real-browser to do its thing
+//       // await delay(5000);
+
+//       // check if Challenge Passed (includes retry logic)
+//       await page.screenshot({ path: path.join(__dirname, `../screenshots/right-before-checking.png`) });
+//       await delay(10000);
+//       await page.screenshot({ path: path.join(__dirname, `../screenshots/after-delay.png`) });
+
+//       const isChallengePassed = await checkIsChallengePassed(page, context.useCase);
+//       if (isChallengePassed) {
+//         return { success: "TurnStile Challenge Handled" };
+//       } else {
+//         throw new Error(`TurnStile Error: Couldn't Solve Challenge`);
+//       }
+//     } else {
+//       await delay(5000);
+//       // TODO: redundancy
+//       // recheck if challenge is passed
+//       const isChallengePassed = await checkIsChallengePassed(page);
+//       if (isChallengePassed) {
+//         return { success: "TurnStile Challenge Handled" };
+//       } else {
+//         throw new Error("TurnStile Error: Couldn't Solve Challenge")
+//       }
+//     }
+//   } else {
+//     logMessage(context.useCase, "===> TurnStile Challenge is Verifying ...");
+//     const isChallengePassed = await checkIsChallengePassed(page);
+//     if (!isChallengePassed) {
+//       throw new Error("TurnStile Error: Couldn't Solve Challenge")
+//     }
+//     return { success: "TurnStile Challenge Handled" };
+//   }
+// };
+
 const handleTurnStile = async (page, { context, withDelay = false, delayTime = 5000 }) => {
-  const map = {
-    "search": "#listResults",
-    "lead": "#teaser-header",
-  };
   const logMessage = (useCase, message) => {
     const map = {
       "search": console.log(message),
@@ -203,49 +327,23 @@ const handleTurnStile = async (page, { context, withDelay = false, delayTime = 5
     return map[useCase];
   };
 
-  // detect
-  let hasTurnStile;
-
-  // TOREMOVE
-  await page.screenshot({ path: path.join(__dirname, "../screenshots/has-turnstile.png"), timeout: 5000 });
-
-  try {
-    hasTurnStile = await page.$$eval("p.h2", (elements) => {
-      return elements[0]?.innerText?.toLowerCase().includes("Verifying you are human") || elements[0]?.innerText?.toLowerCase().includes("Verify you are human");
-    }, { timeout: 1000 });
-  } catch (error) {
-    hasTurnStile = false;
-  }
-
-  // check if puppeteer-real-browser handled the turnstile challenge
-  // add delay to let puppeteer-real-browser do its things
-  if (withDelay) {
-    await delay(delayTime);
-  }
-
-  if (hasTurnStile) {
-    logMessage(context.useCase, "===> turnstile challenge detected ...proceeding");
-    let attempts = 0;
-    const maxAttempts = 3;
-
-    while (attempts < maxAttempts) {
-      try {
-        await page.waitForSelector(map[useCase], { timeout: 1000 });
-        logMessage(context.useCase, '===> turnstile challenge passed.');
-        break;
-      } catch (error) {
-        attempts++;
-        logMessage(useCase, `===> turnstile challenge: retrying... ${attempts}`);
-        if (attempts === maxAttempts) {
-          logMessage(context.useCase, '===! turnstile challenge failed.');
-          throw new Error(`Handling Turnstile Challenge Failed`);
-        }
+  let attempts = 0;
+  let maxAttempts = 3;
+  while (attempts < maxAttempts) {
+    try {
+      await page.waitForSelector('.cb-lb', { timeout: 5000 });
+      await page.click('.cb-lb input[type="checkbox"]', { timeout: 5000 });
+      logMessage("===> TurnStile Challenge Passed");
+    } catch (error) {
+      attempts++;
+      logMessage(context.useCase, `===> turnstile retrying ... ${attempts}`);
+      if (attempts === maxAttempts) {
+        throw new Error(`TurnStile Challenge Failed; ${error.message}`);
       }
     }
-  } else {
-    console.log("===> turnstile challenge not detected ...skipping");
   }
-  return { success: "TurnStile Challenge Handled" };
+
+  return { success: "TurnStile Challenge Passed" };
 };
 
 const handlePopIns = async (page, { context, withDelay = false, delayTime = 5000 }) => {

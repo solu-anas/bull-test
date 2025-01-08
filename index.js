@@ -225,7 +225,8 @@ const run = async (port = 3000) => {
   app.use("/dashboard", serverAdapter.getRouter());
   app.use("/run", async (req, res) => {
     try {
-      const { maxResults, maxPages, queryParams } = await scout({ url, context: { useCase: "search" } });
+      const context = { useCase: "search" }
+      const { maxResults, maxPages, queryParams } = await scout({ url, context });
       await crawlPages(scrapingQueue, { baseUrl, combo, maxPages, maxResults, queryParams });
       return res.json({ success: "ok" });
     } catch (error) {

@@ -17,7 +17,7 @@ const conf = {
 };
 const initBrowser = async (conf) => {
   try {
-    xvfb.startSync();
+    // xvfb.startSync();
     const { browser } = await connect(conf);
     const page = await browser.newPage();
     return { browser, page };
@@ -36,7 +36,7 @@ const getBrowserInstance = async () => {
       customConfig: {},
       turnstile: true,
       connectOption: {},
-      disableXvfb: false,
+      disableXvfb: true,
       ignoreAllFlags: false,
     };
     if (!browserInstance) {
@@ -55,7 +55,7 @@ const closeBrowserInstance = async () => {
     if (browserInstance) {
       await browserInstance.close();
       browserInstance = null;
-      xvfb.stopSync();
+      // xvfb.stopSync();
     }
   } catch (error) {
     throw new Error(`Error Closing Browser: ${error.message}`);
