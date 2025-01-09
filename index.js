@@ -10,9 +10,11 @@ const {
   handlePopIns,
   handleContext,
   setUpPage,
-  scout
+  scout,
+  scrapePage,
 } = require("./helpers");
 
+const path = require("path");
 const { Lead } = require("./models");
 const { Queue, Worker } = require("bullmq");
 const express = require("express");
@@ -109,88 +111,6 @@ const crawlPages = async (scrapingQueue, { pageNumber = 1, baseUrl, combo, maxPa
   }
 };
 
-const scrapePage = async (page) => {
-  let name = "", phone = "", address = "", website = "", brands = "", workingHours = "", legalInfo = "";
-  try {
-    // extract data
-    name = await page.$$eval('.header-main-infos .denom h1.noTrad', (element) => element[0]?.innerText.trim() || "");
-    phone = await page.$$eval('span.nb-phone span.coord-numero', (element) => element[0]?.innerText.trim().toLowerCase() || "");
-    address = await page.$$eval('.address-container span.noTrad', (element) => element[0]?.innerText.trim().toLowerCase() || "");
-    website = await page.$$eval('.lvs-container span.value', (element) => element[0]?.innerText.trim() || "");
-    brands = await page.$$eval('.marques ul.liste-logos li', (elements) => {
-      return elements.map((element) => element?.innerText.trim() || "");
-    });
-    workingHours = await page.$$eval('.zone-informations-pratiques #bloc-horaires #infos-horaires ul.liste-horaires-principaux li', (elements) => {
-      return elements.map((element) => {
-        const day = element.querySelector('p.jour')?.innerText?.trim() || "";
-        const hours = element.querySelector('p.liste span.horaire')?.innerText?.trim().split(" - ") || [];
-        return { day, hours };
-      })
-    });
-
-    legalInfo = await page.evaluate(() => {
-      const establishmentInfo = {};
-      const companyInfo = {};
-
-      // Extract establishment data
-      const establishmentElements = document.querySelectorAll('.info-etablissement dt');
-      establishmentElements.forEach(dt => {
-        const key = dt.textContent.trim();
-        const value = dt.nextElementSibling.querySelector('strong')?.textContent.trim() || '';
-        establishmentInfo[key] = value;
-      });
-
-      // Extract company data
-      // eslint-disable-next-line no-undef
-      const companyElements = document.querySelectorAll('.info-entreprise dt');
-      companyElements.forEach(dt => {
-        const key = dt.textContent.trim();
-        const value = dt.nextElementSibling.querySelector('strong')?.textContent.trim() || '';
-        companyInfo[key] = value;
-      });
-      return { establishmentInfo, companyInfo };
-    });
-  } catch (error) {
-    throw new Error(`Error Scraping Data: ${error.message}`);
-  }
-  return { name, phone, address, website, brands, workingHours, legalInfo };
-};
-
-const scrapingProcessor = async (job) => {
-  try {
-    const { leadId, pjId } = job.data;
-    const browser = await getBrowserInstance();
-    const page = await browser.newPage();
-    const url = `https://www.pagesjaunes.fr/pros/${pjId}`;
-    const context = { useCase: "lead", job };
-    await setUpPage(page, { url, context });
-    await handleTurnStile(page, { context, withDelay: true, delayTime: 5000 });
-    const scrapedData = await scrapePage(page);
-    const updates = {};
-    // TOREVISE: do more calculations, make the job return a report of what it collected
-    Object.entries(scrapedData).forEach(([key, value]) => {
-      if (value) {
-        updates[`data.${key}`] = value;
-      }
-    });
-    if (Object.keys(updates).length !== 0) {
-      const lead = await Lead.findByIdAndUpdate(leadId, updates, { new: true });
-      if (!lead) {
-        job.log(`lead ${pjId} not found, creating new instance...`);
-        const newLead = new Lead({ data: { pjId, ...updates } });
-        await newLead.save();
-      }
-    };
-    // always close page after use
-    await page.close();
-    return { success: `Scraped Data of Lead: ${pjId} Successfully` };
-  } catch (error) {
-    job.log(`Error Scraping Data: ${error.message}`);
-    await closeBrowserInstance();
-    throw new Error(`Error Scraping Data: ${error.message}`);
-  }
-};
-
 const run = async (port = 3000) => {
   process.on("SIGINT", async () => {
     await closeBrowserInstance();
@@ -210,7 +130,7 @@ const run = async (port = 3000) => {
   const url = constructQuery(baseUrl, combo);
   const name = `${Object.entries(combo).map(([key, value]) => `${value}`).join('-')}`;
   const scrapingQueue = new Queue(name, { connection: { host: "localhost", port: 6379 } });
-  const worker = new Worker(scrapingQueue.name, scrapingProcessor, { concurrency: 5, connection: { host: "localhost", port: 6379 } });
+  const worker = new Worker(scrapingQueue.name, path.join(__dirname, "./processor.js"), { concurrency: 2, connection: { host: "localhost", port: 6379 } });
 
   // server connection
   const app = express();

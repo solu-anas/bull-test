@@ -12,7 +12,7 @@ const conf = {
   customConfig: {},
   turnstile: true,
   connectOption: {},
-  disableXvfb: false,
+  disableXvfb: true,
   ignoreAllFlags: false,
 };
 const initBrowser = async (conf) => {

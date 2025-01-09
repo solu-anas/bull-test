@@ -318,6 +318,102 @@ const handleContext = async (url, oldParams, { context }) => {
 //   }
 // };
 
+// const handleTurnStile = async (page, { context, withDelay = false, delayTime = 5000 }) => {
+//   await page.screenshot({ path: path.join(__dirname, `../screenshots/turnstile.png`) });
+//   const logMessage = (useCase, message) => {
+//     const map = {
+//       "search": console.log(message),
+//       "lead": context?.job?.log(message),
+//     }
+//     return map[useCase];
+//   };
+
+//   const map = {
+//     "search": "#listResults",
+//     "lead": "#teaser-header",
+//   };
+
+//   let attempts = 0;
+//   let maxAttempts = 3;
+//   while (attempts < maxAttempts) {
+//     try {
+//       // this means the cloudflare challenge is showing
+//       await page.waitForSelector('.cb-lb input[type="checkbox"]', { timeout: 5000 });
+//       await page.click('.cb-lb input[type="checkbox"]', { timeout: 5000 });
+//       break;
+//     } catch (error) {
+//       // either 1) the actual page shows up or 2) there is an error
+//       // check whether the actual page shows up or not
+//       let attempts = 0;
+//       let maxAttempts = 3;
+//       while (attempts < maxAttempts) {
+//         try {
+//           await page.waitForSelector(map[context.useCase], { timeout: 5000 });
+//           logMessage("===> TurnStile Challenge Passed");
+//           break;
+//         } catch (error) {
+//           attempts++
+//           logMessage(`\t===> checking if challenge is passed ... retrying ${attempts}`);
+//           if (attempts === maxAttempts) {
+//             throw new Error(`TurnStile Challenge Did Not Pass: ${error.message}`);
+//           }
+//         }
+//       }
+//     }
+//   }
+
+//   return { success: "TurnStile Challenge Passed" };
+// };
+
+// const handleTurnStile = async (page, { context, withDelay = false, delayTime = 5000 }) => {
+//   await page.screenshot({ path: path.join(__dirname, `../screenshots/turnstile.png`) });
+
+//   const logMessage = (useCase, message) => {
+//     const map = {
+//       search: console.log,
+//       lead: context?.job?.log,
+//     };
+//     const logFn = map[useCase];
+//     if (logFn) logFn(message);
+//   };
+
+//   const selectorMap = {
+//     search: "#listResults",
+//     lead: "#teaser-header",
+//   };
+
+//   const useCase = context?.useCase;
+//   const targetSelector = selectorMap[useCase];
+//   if (!targetSelector) throw new Error("Invalid use case provided.");
+
+//   let attempts = 0;
+//   const maxAttempts = 3;
+
+//   while (attempts < maxAttempts) {
+//     try {
+//       // Wait for Turnstile challenge checkbox and interact with it
+//       await page.waitForSelector('.cb-lb input[type="checkbox"]', { timeout: 5000 });
+//       await page.click('.cb-lb input[type="checkbox"]', { timeout: 5000 });
+//       logMessage(useCase, "===> Turnstile checkbox clicked.");
+
+//       // Wait for the actual page content to appear
+//       await page.waitForSelector(targetSelector, { timeout: 5000 });
+//       logMessage(useCase, "===> Turnstile Challenge Passed.");
+//       return { success: "Turnstile Challenge Passed" };
+//     } catch (error) {
+//       attempts++;
+//       logMessage(
+//         useCase,
+//         `\t===> Attempt ${attempts} failed. Retrying... (${error.message})`
+//       );
+
+//       if (attempts === maxAttempts) {
+//         throw new Error(`Turnstile Challenge Did Not Pass: ${error.message}`);
+//       }
+//     }
+//   }
+// };
+
 const handleTurnStile = async (page, { context, withDelay = false, delayTime = 5000 }) => {
   const logMessage = (useCase, message) => {
     const map = {
@@ -327,23 +423,44 @@ const handleTurnStile = async (page, { context, withDelay = false, delayTime = 5
     return map[useCase];
   };
 
+  const selectorMap = {
+    search: "#listResults",
+    lead: "#teaser-header",
+  };
+
+  const useCase = context?.useCase;
+  const targetSelector = selectorMap[useCase];
+  if (!targetSelector) throw new Error("Invalid use case provided.");
+
   let attempts = 0;
-  let maxAttempts = 3;
+  const maxAttempts = 3;
+
   while (attempts < maxAttempts) {
     try {
-      await page.waitForSelector('.cb-lb', { timeout: 5000 });
-      await page.click('.cb-lb input[type="checkbox"]', { timeout: 5000 });
-      logMessage("===> TurnStile Challenge Passed");
+      // Check for the presence of the Turnstile checkbox
+      await page.waitForSelector('.cb-lb input[type="checkbox"]', { timeout: 5000 });
+      await page.click('.cb-lb input[type="checkbox"]');
+      logMessage(useCase, "===> Turnstile checkbox clicked.");
     } catch (error) {
-      attempts++;
-      logMessage(context.useCase, `===> turnstile retrying ... ${attempts}`);
-      if (attempts === maxAttempts) {
-        throw new Error(`TurnStile Challenge Failed; ${error.message}`);
+      // If the checkbox is not found, check for the actual page
+      try {
+        await page.waitForSelector(targetSelector, { timeout: 5000 });
+        logMessage(useCase, "===> Turnstile Challenge Passed.");
+        return { success: "Turnstile Challenge Passed" };
+      } catch (innerError) {
+        // Log retry and reattempt if actual page is not displayed
+        await page.screenshot({ path: path.join(__dirname, `../screenshots/turnstile/${useCase}-${attempts}.png`) })
+        attempts++;
+        logMessage(useCase, `\t===> Attempt ${attempts} failed. Retrying... (${innerError.message})`);
+        if (attempts === maxAttempts) {
+          throw new Error(`Turnstile Challenge Did Not Pass: ${innerError.message}`);
+        }
+        // if (withDelay) await delay(5000);
       }
     }
   }
 
-  return { success: "TurnStile Challenge Passed" };
+  throw new Error("Turnstile Challenge Could Not Be Completed.");
 };
 
 const handlePopIns = async (page, { context, withDelay = false, delayTime = 5000 }) => {
@@ -420,6 +537,53 @@ const handleConsent = async (page, { context, withDelay = false, delayTime = 500
   return { success: "Consent Handled" };
 };
 
+const scrapePage = async (page) => {
+  let name = "", phone = "", address = "", website = "", brands = "", workingHours = "", legalInfo = "";
+  try {
+    // extract data
+    name = await page.$$eval('.header-main-infos .denom h1.noTrad', (element) => element[0]?.innerText.trim() || "");
+    phone = await page.$$eval('span.nb-phone span.coord-numero', (element) => element[0]?.innerText.trim().toLowerCase() || "");
+    address = await page.$$eval('.address-container span.noTrad', (element) => element[0]?.innerText.trim().toLowerCase() || "");
+    website = await page.$$eval('.lvs-container span.value', (element) => element[0]?.innerText.trim() || "");
+    brands = await page.$$eval('.marques ul.liste-logos li', (elements) => {
+      return elements.map((element) => element?.innerText.trim() || "");
+    });
+    workingHours = await page.$$eval('.zone-informations-pratiques #bloc-horaires #infos-horaires ul.liste-horaires-principaux li', (elements) => {
+      return elements.map((element) => {
+        const day = element.querySelector('p.jour')?.innerText?.trim() || "";
+        const hours = element.querySelector('p.liste span.horaire')?.innerText?.trim().split(" - ") || [];
+        return { day, hours };
+      })
+    });
+
+    legalInfo = await page.evaluate(() => {
+      const establishmentInfo = {};
+      const companyInfo = {};
+
+      // Extract establishment data
+      const establishmentElements = document.querySelectorAll('.info-etablissement dt');
+      establishmentElements.forEach(dt => {
+        const key = dt.textContent.trim();
+        const value = dt.nextElementSibling.querySelector('strong')?.textContent.trim() || '';
+        establishmentInfo[key] = value;
+      });
+
+      // Extract company data
+      // eslint-disable-next-line no-undef
+      const companyElements = document.querySelectorAll('.info-entreprise dt');
+      companyElements.forEach(dt => {
+        const key = dt.textContent.trim();
+        const value = dt.nextElementSibling.querySelector('strong')?.textContent.trim() || '';
+        companyInfo[key] = value;
+      });
+      return { establishmentInfo, companyInfo };
+    });
+  } catch (error) {
+    throw new Error(`Error Scraping Data: ${error.message}`);
+  }
+  return { name, phone, address, website, brands, workingHours, legalInfo };
+};
+
 module.exports = {
   handleContext,
   handleTurnStile,
@@ -430,4 +594,5 @@ module.exports = {
   setUpPage,
   scout,
   delay,
+  scrapePage,
 };
