@@ -4,6 +4,7 @@ const fs = require("fs/promises");
 
 // localy-used too
 const setUpPage = async (page, { context, url, userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36' }) => {
+  let cookies;
   const logMessage = (useCase, message) => {
     const map = {
       "search": console.log(message),
@@ -19,6 +20,8 @@ const setUpPage = async (page, { context, url, userAgent = 'Mozilla/5.0 (Windows
     try {
       await page.setUserAgent(userAgent);
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 5000 });
+      // retrieve any cookies to have a persistent session
+      cookies = await page.cookies();
       logMessage(context.useCase, "===> page set up ...done");
       break;
     } catch (error) {
@@ -29,8 +32,7 @@ const setUpPage = async (page, { context, url, userAgent = 'Mozilla/5.0 (Windows
       }
     }
   }
-  // await page.screenshot({ path: path.join(__dirname, "../screenshots/page_setup.png") });
-  return { success: "Page Set Up Successfully" };
+  return { cookies };
 };
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -438,12 +440,14 @@ const handleTurnStile = async (page, { context, withDelay = false, delayTime = 5
   while (attempts < maxAttempts) {
     try {
       // Check for the presence of the Turnstile checkbox
+      await delay(5000);
       await page.waitForSelector('.cb-lb input[type="checkbox"]', { timeout: 5000 });
       await page.click('.cb-lb input[type="checkbox"]');
       logMessage(useCase, "===> Turnstile checkbox clicked.");
     } catch (error) {
       // If the checkbox is not found, check for the actual page
       try {
+        await delay(5000);
         await page.waitForSelector(targetSelector, { timeout: 5000 });
         logMessage(useCase, "===> Turnstile Challenge Passed.");
         return { success: "Turnstile Challenge Passed" };
@@ -538,6 +542,16 @@ const handleConsent = async (page, { context, withDelay = false, delayTime = 500
 };
 
 const scrapePage = async (page) => {
+  await page.setRequestInterception(true);
+  page.on("request", (req) => {
+    const blockResources = ["image", "stylesheet", "font"];
+    if (blockResources.includes(req.resourceType())) {
+      req.abort();
+    } else {
+      req.continue();
+    }
+  });
+
   let name = "", phone = "", address = "", website = "", brands = "", workingHours = "", legalInfo = "";
   try {
     // extract data
@@ -584,6 +598,75 @@ const scrapePage = async (page) => {
   return { name, phone, address, website, brands, workingHours, legalInfo };
 };
 
+const constructUrlWithParams = (baseUrl, queryParams) => {
+  try {
+    return `${baseUrl}?${Object.entries(queryParams).map(([key, value]) => `${key}=${value}`).join('&')}`;
+  } catch (error) {
+    throw new Error(`Error Constructing Url With Params: ${error.message}`);
+  }
+};
+
+const constructQuery = (baseUrl, combo, contexte = undefined, pageNumber = undefined) => {
+  try {
+    const constructed = `${baseUrl}?${Object.entries(combo).map(([key, value]) => `${key}=${value}`).join('&')}`;
+    if (contexte && pageNumber) {
+      return constructed.concat(`&contexte=${contexte}&page=${pageNumber}`);
+    };
+    return constructed;
+  } catch (error) {
+    throw new Error(`Error Constructing Query: ${error.message}`);
+  }
+};
+
+const crawlPages = async (scrapingQueue, { pageNumber = 1, baseUrl, combo, maxPages, maxResults, queryParams }) => {
+  try {
+    // const { contexte } = queryParams;
+    const browser = await getBrowserInstance();
+    const page = await browser.newPage();
+    console.log(`page: ${pageNumber} of ${maxPages}`);
+    if (pageNumber <= maxPages) {
+      const url = constructUrlWithParams(baseUrl, { ...combo, ...queryParams, page: pageNumber });
+      const context = { useCase: "search" };
+      await setUpPage(page, { url, context });
+      queryParams = await handleContext(url, queryParams, { context });
+      await handleTurnStile(page, { context, withDelay: true, delayTime: 5000 });
+      await handleConsent(page, { context, withDelay: false });
+      await handlePopIns(page, { context, withDelay: false });
+      // extract pjId and save to database
+      const pjIds = await page.$$eval('#listResults ul li', (elements) => {
+        return elements
+          .filter(({ id }) => !!id)
+          .map((element) => element?.id?.split("bi-")[1].trim());
+      });
+
+      // we are here
+      pjIds.forEach((pjId) => console.log("===> pjId:", pjId));
+      const createLeadsForJob = pjIds.map((pjId) => {
+        const lead = new Lead({ data: { pjId } });
+        return Promise.all([
+          // saving promise
+          lead.save(),
+          // scraping promise
+          scrapingQueue.add(`scraping-of-${pjId}`, { leadId: lead._id.toHexString(), pjId: lead.data.pjId }),
+        ]
+        );
+      });
+      // woah
+      await Promise.all(createLeadsForJob);
+
+      // increment page number and crawl next page
+      queryParams.page = pageNumber++;
+      await crawlPages(scrapingQueue, { pageNumber, baseUrl, combo, maxPages, maxResults, queryParams });
+    }
+    // always close page after use
+    await page.close();
+    return { success: `Crawled Pages of Combo: ${JSON.stringify(combo)} Successfully` };
+  } catch (error) {
+    await closeBrowserInstance();
+    throw new Error(`Error Crawling Page: ${error.message}`);
+  }
+};
+
 module.exports = {
   handleContext,
   handleTurnStile,
@@ -595,4 +678,7 @@ module.exports = {
   scout,
   delay,
   scrapePage,
+  constructUrlWithParams,
+  constructQuery,
+  crawlPages,
 };

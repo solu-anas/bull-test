@@ -13,6 +13,7 @@
   "dependencies": {
     "@bull-board/api": "^6.5.4",
     "@bull-board/express": "^6.5.4",
+    "axios": "^1.7.9",
     "bull": "^4.16.5",
     "bullmq": "^5.34.5",
     "dotenv": "^16.4.7",
@@ -20,6 +21,7 @@
     "express": "^4.21.2",
     "mongoose": "^8.9.2",
     "puppeteer": "^23.11.1",
+    "puppeteer-cluster": "^0.24.0",
     "puppeteer-core": "^23.11.1",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",

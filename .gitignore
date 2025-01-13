@@ -1,4 +1,6 @@
 node_modules
 screenshots
 contents
+playground
+user_data
 .env

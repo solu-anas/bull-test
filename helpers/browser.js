@@ -1,50 +1,31 @@
-const Xvfb = require('xvfb');
-const puppeteer = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-puppeteer.use(StealthPlugin());
+const { Cluster } = require("puppeteer-cluster");
 const { connect } = require("puppeteer-real-browser");
-const xvfb = new Xvfb();
+const path = require("path");
 
-const conf = {
-  puppeteer,
-  headless: true,
-  args: [],
-  customConfig: {},
-  turnstile: true,
-  connectOption: {},
-  disableXvfb: true,
-  ignoreAllFlags: false,
-};
-const initBrowser = async (conf) => {
-  try {
-    // xvfb.startSync();
-    const { browser } = await connect(conf);
-    const page = await browser.newPage();
-    return { browser, page };
-  } catch (error) {
-    throw new Error(`Error Initiating Browser: ${error.message}`);
-  }
-};
-
-let browserInstance = null;
+let browserInstance;
 const getBrowserInstance = async () => {
   try {
     const conf = {
-      puppeteer,
-      headless: true,
+      // puppeteer,
+      headless: false,
       args: [],
       customConfig: {},
       turnstile: true,
       connectOption: {},
       disableXvfb: true,
       ignoreAllFlags: false,
+      fingerprint: true,
+      tls: true,
+      userDataDir: path.join(__dirname, "../user_data"),
+      plugins: [
+        require('puppeteer-extra-plugin-stealth')()
+      ]
     };
     if (!browserInstance) {
       const { browser } = await connect(conf);
       browserInstance = browser;
     }
     return browserInstance;
-
   } catch (error) {
     throw new Error(`Error Initiating Browser: ${error.message}`);
   }
@@ -62,4 +43,19 @@ const closeBrowserInstance = async () => {
   }
 };
 
-module.exports = { closeBrowserInstance, getBrowserInstance, initBrowser, conf };
+// Cluster initialization
+const createCluster = async () => {
+  const browser = await getBrowserInstance();
+
+  const cluster = await Cluster.launch({
+    concurrency: Cluster.CONCURRENCY_CONTEXT,
+    maxConcurrency: 5,
+    monitor: true,
+    puppeteer: browser,
+    puppeteerOptions: {},
+  });
+
+  return cluster;
+};
+
+module.exports = { closeBrowserInstance, getBrowserInstance, createCluster };
