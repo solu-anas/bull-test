@@ -1,54 +1,31 @@
 const {
   parameters,
-  baseUrl,
-  getMaxResultsAndPages,
-  getQueryParams,
-  getBrowserInstance,
   closeBrowserInstance,
-  handleConsent,
-  handleTurnStile,
-  handlePopIns,
-  handleContext,
-  setUpPage,
-  scout,
-  constructUrlWithParams,
-  scrapePage,
-  constructQuery,
   createCombos,
-  crawlPages,
-  getQueue,
   connectDB,
 } = require("./helpers");
 
+const {
+  crawlingRouter,
+  scrapingRouter,
+} = require("./routers");
+
 const path = require("path");
-const { Lead } = require("./models");
 const express = require("express");
 const { createBullBoard } = require('@bull-board/api');
-const { Worker } = require("bullmq");
-const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter');
 const { ExpressAdapter } = require('@bull-board/express');
-const mongoose = require("mongoose");
+const { Queue, Worker } = require("bullmq");
+const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter');
 
 const run = async (port = 3000) => {
-  process.on("SIGINT", async () => {
-    await closeBrowserInstance();
-    console.log("===> process terminated sigint");
-    process.exit(0);
-  });
-
-  process.on("SIGTERM", async () => {
-    await closeBrowserInstance();
-    console.log("===> process terminated sigterm");
-    process.exit(0);
-  });
-
-  // await mongoose.connect("mongodb://localhost:27017/bull-test");
   await connectDB();
   const combos = createCombos(parameters);
-  const combo = combos[0];
-  const url = constructQuery(baseUrl, combo);
-  const scrapingQueue = getQueue(combo);
-  const worker = new Worker(scrapingQueue.name, path.join(__dirname, "./processor.js"), { concurrency: 2, connection: { host: "localhost", port: 6379 } });
+
+  const taskQueue = new Queue(
+    "tasks",
+    { connection: { host: "localhost", port: 6379 } }
+  );
+  new Worker(taskQueue.name, path.join(__dirname, "./jobs/taskProcessor.js"), { concurrency: 2, connection: { host: "localhost", port: 6379 } });
 
   // server connection
   const app = express();
@@ -56,28 +33,21 @@ const run = async (port = 3000) => {
   serverAdapter.setBasePath("/dashboard");
 
   // add queues to the dashboard
-  createBullBoard({ queues: [new BullMQAdapter(scrapingQueue)], serverAdapter });
+  createBullBoard({
+    queues: [new BullMQAdapter(taskQueue)],
+    serverAdapter
+  });
 
   // middlewares
-  // const browser = await getBrowserInstance();
   app.use("/dashboard", serverAdapter.getRouter());
+  app.use("/crawling", crawlingRouter);
+  app.use("/scraping", scrapingRouter);
 
   app.use("/run", async (req, res) => {
     try {
-      const context = { useCase: "search" }
-      scout({ url, context })
-        .then(async ({ maxResults, maxPages, queryParams }) => {
-          // testing
-          await scrapingQueue.add("crawl-job", { pageNumber: 1, baseUrl, combo, maxPages, maxResults, queryParams });
-
-          // crawlPages(scrapingQueue, { baseUrl, combo, maxPages, maxResults, queryParams })
-          //   .then(() => {
-          //     console.log("test");
-          //   })
-        });
-
-      // immediately sends response after scout() starts
-      return res.json({ success: "started" });
+      const tasks = combos.map((combo) => ({ name: `task-of-${Object.entries(combo).map(([key, value]) => `${value}`).join('-')}`, data: { combo } }));
+      await taskQueue.addBulk(tasks);
+      return res.json({ message: "Task Jobs Created Successfully" });
     } catch (error) {
       console.error("===x error:", error.message);
       return res.json({ error: `Error Creating Task Jobs: ${error.message} ` });

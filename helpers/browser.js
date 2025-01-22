@@ -1,13 +1,17 @@
 const { Cluster } = require("puppeteer-cluster");
-const { connect } = require("puppeteer-real-browser");
+// const { connect } = require("puppeteer-real-browser");
+const puppeteer = require("puppeteer-real-browser");
+const { connect } = puppeteer;
 const path = require("path");
+const os = require("os");
+const maxConcurrency = Math.min(os.cpus().length, 10);
 
 let browserInstance;
 const getBrowserInstance = async () => {
   try {
     const conf = {
       // puppeteer,
-      headless: false,
+      headless: true,
       args: [],
       customConfig: {},
       turnstile: true,
@@ -46,13 +50,29 @@ const closeBrowserInstance = async () => {
 // Cluster initialization
 const createCluster = async () => {
   const browser = await getBrowserInstance();
-
   const cluster = await Cluster.launch({
-    concurrency: Cluster.CONCURRENCY_CONTEXT,
-    maxConcurrency: 5,
+    // concurrency: Cluster.CONCURRENCY_CONTEXT,
+    concurrency: Cluster.CONCURRENCY_PAGE,
+    maxConcurrency,
     monitor: true,
-    puppeteer: browser,
-    puppeteerOptions: {},
+    // puppeteer: browser,
+    // puppeteer,
+    // puppeteerOptions: {
+    //   // puppeteer,
+    //   headless: false,
+    //   args: [],
+    //   customConfig: {},
+    //   turnstile: true,
+    //   connectOption: {},
+    //   disableXvfb: true,
+    //   ignoreAllFlags: false,
+    //   fingerprint: true,
+    //   tls: true,
+    //   userDataDir: path.join(__dirname, "../user_data"),
+    //   plugins: [
+    //     require('puppeteer-extra-plugin-stealth')()
+    //   ]
+    // },
   });
 
   return cluster;
