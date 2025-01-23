@@ -1,14 +1,13 @@
 const {
   parameters,
+  baseUrl,
   closeBrowserInstance,
   createCombos,
   connectDB,
+  scout,
+  constructQuery,
+  delay
 } = require("./helpers");
-
-const {
-  crawlingRouter,
-  scrapingRouter,
-} = require("./routers");
 
 const path = require("path");
 const express = require("express");
@@ -21,11 +20,12 @@ const run = async (port = 3000) => {
   await connectDB();
   const combos = createCombos(parameters);
 
-  const taskQueue = new Queue(
-    "tasks",
-    { connection: { host: "localhost", port: 6379 } }
-  );
-  new Worker(taskQueue.name, path.join(__dirname, "./jobs/taskProcessor.js"), { concurrency: 2, connection: { host: "localhost", port: 6379 } });
+  const queuesWithCombos = combos.map((combo) => {
+    const queueName = `${Object.entries(combo).map(([key, value]) => `${value}`).join('-')}`;
+    const queue = new Queue(queueName, { connection: { host: "localhost", port: 6379 } });
+    new Worker(queue.name, path.join(__dirname, "./jobs/taskProcessor.js"), { connection: { host: "localhost", port: 6379 } });
+    return { queue, combo };
+  });
 
   // server connection
   const app = express();
@@ -34,19 +34,34 @@ const run = async (port = 3000) => {
 
   // add queues to the dashboard
   createBullBoard({
-    queues: [new BullMQAdapter(taskQueue)],
+    queues: queuesWithCombos.map(({ queue }) => new BullMQAdapter(queue)),
     serverAdapter
   });
 
   // middlewares
   app.use("/dashboard", serverAdapter.getRouter());
-  app.use("/crawling", crawlingRouter);
-  app.use("/scraping", scrapingRouter);
 
   app.use("/run", async (req, res) => {
+    const throttleRequests = async (queuesWithCombos) => {
+      const batchSize = 4; // Process 2 requests at a time
+      for (let i = 0; i < queuesWithCombos.length; i += batchSize) {
+        const batch = queuesWithCombos.slice(i, i + batchSize);
+        await Promise.all(batch.map(async ({ queue, combo }) => {
+          const url = constructQuery(baseUrl, combo);
+          const result = await scout({ url, context: { useCase: "search" } });
+          return queue.add("crawl-job", {
+            pageNumber: 1,
+            baseUrl,
+            combo,
+            ...result,
+            queueName: queue.name,
+          });
+        }));
+        // await delay(2000); // Wait 2 seconds between batches
+      }
+    };
     try {
-      const tasks = combos.map((combo) => ({ name: `task-of-${Object.entries(combo).map(([key, value]) => `${value}`).join('-')}`, data: { combo } }));
-      await taskQueue.addBulk(tasks);
+      await throttleRequests(queuesWithCombos);
       return res.json({ message: "Task Jobs Created Successfully" });
     } catch (error) {
       console.error("===x error:", error.message);

@@ -3,19 +3,27 @@ const {
   scout,
   baseUrl,
   connectDB,
+  constructUrlWithParams,
+  handleContext,
+  apiCredentials,
 } = require("../helpers");
 const { Queue, Worker } = require("bullmq");
+const { Lead } = require("../models");
 const path = require("path");
-
+const cheerio = require("cheerio")
 
 module.exports = async (job) => {
   try {
     await connectDB();
     // We are here
-    console.log("===> scraping started ...");
     let url;
-    const { leadId, pjId, pageNumber, baseUrl, combo, maxPages, maxResults } = job.data;
+    const { leadId, pjId, pageNumber, baseUrl, combo, maxPages, maxResults, queueName } = job.data;
+    if (!maxPages) {
+      throw new Error("maxPages is not defined");
+    }
+
     let { queryParams } = job.data;
+    console.log("===> scraping started ...");
     // const browser = await getBrowserInstance();
     // const page = await browser.newPage();
     if (pjId) {
@@ -83,7 +91,8 @@ module.exports = async (job) => {
         .toArray();
 
 
-      const queue = getQueue(combo);
+      // const queue = getQueue(combo);
+      const queue = new Queue(queueName, { connection: { host: "localhost", port: 6379 } });
       const createLeadsForJob = pjIds.map((pjId) => {
         const lead = new Lead({ data: { pjId } });
         return Promise.all([

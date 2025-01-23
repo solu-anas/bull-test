@@ -182,6 +182,74 @@ const getMaxResultsAndPages = async (page, { withDelay = false, delayTime = 5000
   }
 };
 
+// const scout = async ({ url, context }) => {
+//   const proxyConf = {
+//     method: "POST",
+//     body: JSON.stringify({ url, "geo": "France" }),
+//     headers: {
+//       "Content-Type": "application/json",
+//       "Authorization": apiCredentials,
+//     },
+//   };
+
+//   let attempts = 0;
+//   let maxAttempts = 3;
+//   while (attempts < maxAttempts) {
+//     try {
+//       let response;
+//       try {
+//         response = await fetch("https://scraper-api.smartproxy.com/v2/scrape", proxyConf);
+//       } catch (error) {
+//         throw new Error(`Error fetching page: ${error.message}`);
+//       }
+
+//       if (!response.ok) {
+//         throw new Error(`Error fetching page: ${response.statusText}`);
+//       };
+
+//       const page = (await response.json()).results[0].content;
+//       // old
+//       // const browser = await getBrowserInstance();
+//       // const page = await browser.newPage();
+//       // await setUpPage(page, { url, context });
+//       // await handleTurnStile(page, { context, withDelay: true, delayTime: 10000 });
+//       // await handleConsent(page, { context, withDelay: false, delayTime: 5000 });
+//       // await handlePopIns(page, { context, withDelay: false, delayTime: 5000 });
+//       const { maxResults, maxPages } = await getMaxResultsAndPages(page, { withDelay: true, delayTime: 5000 });
+//       const queryParams = await getQueryParams(page, { context, withDelay: false, delayTime: 5000 });
+//       // const fullUrl = await page.evaluate(() => window.location.href);
+//       return { maxResults, maxPages, queryParams }
+//     } catch (error) {
+//       attempts++;
+//       console.log(`===> scout: retrying... ${attempts}`);
+//       if (attempts === maxAttempts) {
+//         console.error('\t===! scout: failed.');
+//         throw new Error(`Error Scouting: ${error.message}`);
+//       }
+//     }
+//     //   const browser = await getBrowserInstance();
+//     //   const page = await browser.newPage();
+//     //   // const context = { useCase: "search" }
+//     //   await setUpPage(page, { url, context });
+//     //   await handleTurnStile(page, { context, withDelay: true, delayTime: 10000 });
+//     //   await handleConsent(page, { context, withDelay: false, delayTime: 5000 });
+//     //   await handlePopIns(page, { context, withDelay: false, delayTime: 5000 });
+//     //   const { maxResults, maxPages } = await getMaxResultsAndPages(page, { withDelay: true, delayTime: 5000 });
+//     //   const queryParams = await getQueryParams(page, { context, withDelay: false });
+//     //   const fullUrl = await page.evaluate(() => window.location.href);
+
+//     //   // always close page after use
+//     //   await page.close();
+
+//     //   return { maxResults, maxPages, queryParams, fullUrl };
+//     // } catch (error) {
+//     //   console.log(error.stack);
+//     //   throw new Error(`Error Scouting Page: ${error.message}`);
+//     // }
+//   };
+// };
+
+
 const scout = async ({ url, context }) => {
   const proxyConf = {
     method: "POST",
@@ -194,21 +262,31 @@ const scout = async ({ url, context }) => {
 
   let attempts = 0;
   let maxAttempts = 3;
+
   while (attempts < maxAttempts) {
     try {
+      // Add exponential backoff delay
+      const backoffDelay = Math.pow(2, attempts) * 1000;
+      await delay(backoffDelay);
+
       const response = await fetch("https://scraper-api.smartproxy.com/v2/scrape", proxyConf);
+
+      console.log(await response.json());
+
+      if (response.status === 429) { // Too Many Requests
+        attempts++;
+        continue;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Error fetching page: ${response.statusText}`);
+      }
+
       const page = (await response.json()).results[0].content;
-      // old
-      // const browser = await getBrowserInstance();
-      // const page = await browser.newPage();
-      // await setUpPage(page, { url, context });
-      // await handleTurnStile(page, { context, withDelay: true, delayTime: 10000 });
-      // await handleConsent(page, { context, withDelay: false, delayTime: 5000 });
-      // await handlePopIns(page, { context, withDelay: false, delayTime: 5000 });
       const { maxResults, maxPages } = await getMaxResultsAndPages(page, { withDelay: true, delayTime: 5000 });
       const queryParams = await getQueryParams(page, { context, withDelay: false, delayTime: 5000 });
-      // const fullUrl = await page.evaluate(() => window.location.href);
-      return { maxResults, maxPages, queryParams }
+
+      return { maxResults, maxPages, queryParams };
     } catch (error) {
       attempts++;
       console.log(`===> scout: retrying... ${attempts}`);
@@ -217,26 +295,7 @@ const scout = async ({ url, context }) => {
         throw new Error(`Error Scouting: ${error.message}`);
       }
     }
-    //   const browser = await getBrowserInstance();
-    //   const page = await browser.newPage();
-    //   // const context = { useCase: "search" }
-    //   await setUpPage(page, { url, context });
-    //   await handleTurnStile(page, { context, withDelay: true, delayTime: 10000 });
-    //   await handleConsent(page, { context, withDelay: false, delayTime: 5000 });
-    //   await handlePopIns(page, { context, withDelay: false, delayTime: 5000 });
-    //   const { maxResults, maxPages } = await getMaxResultsAndPages(page, { withDelay: true, delayTime: 5000 });
-    //   const queryParams = await getQueryParams(page, { context, withDelay: false });
-    //   const fullUrl = await page.evaluate(() => window.location.href);
-
-    //   // always close page after use
-    //   await page.close();
-
-    //   return { maxResults, maxPages, queryParams, fullUrl };
-    // } catch (error) {
-    //   console.log(error.stack);
-    //   throw new Error(`Error Scouting Page: ${error.message}`);
-    // }
-  };
+  }
 };
 
 const handleContext = async (url, oldParams, { context }) => {
